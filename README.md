@@ -10,7 +10,7 @@
 - **内置兜底模型**：镜像里自带一份模型，OBS 不可用时自动降级，服务永远能启动
 - **双模式自动检测**：按环境变量自动选择 `obs-api`（OBS API 模式）或 `local-signature`（本地签名模式），启动日志说明原因
 - **可观测**：启动日志逐条打印 OBS 探活结果，`/health` 实时回答"到底连上 OBS 没有"
-- **一键脚本**：构建 / 本地验证 / 推 SWR（`build_and_run.ps1`），真凭证全链路验收（`verify_fullchain.ps1`）
+- **零脚本依赖**：构建、验证、推送全部是原生 docker / curl / python 命令，照着 README 复制就能跑
 
 ## 仓库结构
 
@@ -20,10 +20,8 @@
 | `Dockerfile` | python:3.11-slim + xgboost + esdk-obs-python，内置兜底模型，满足 ModelArts 镜像契约（ma-user 1000:100） |
 | `model/xgboost_breast_cancer.json` | 内置兜底模型（基线模型，100 棵树） |
 | `sample_request.json` | 30 特征标准推理请求体 |
-| `build_and_run.ps1` | 一键脚本：仅构建 / 本地两种模式验证 / 推送 SWR |
-| `verify_fullchain.ps1` | 真凭证本地全链路验收（备份→探活→推理→换模型→重启→恢复 OBS） |
-| `obs_tool.py` | 容器内 OBS 小工具：info / backup / replace / delete |
-| `verify_hotswap.ipynb` | 新手向完整验证 notebook：训练两套模型 → 验证热切换闭环 |
+| `obs_tool.py` | 容器内 OBS 小工具（可选）：在容器里查 / 备份 / 替换 / 删除 OBS 对象，宿主机装好 Docker 即可用 |
+| `verify_hotswap.ipynb` | 新手向完整验证 notebook：训练两套模型 → 健康检查 → 基线推理 → 热切换闭环 |
 | `model_out/` | 教程训练产物目录（自己跑第 1 步时生成，已 gitignore） |
 | `model_mount/` | 本地 `-v` 挂载验证用（自建即可：把 `model/` 里的模型复制进去，已 gitignore） |
 
@@ -38,7 +36,7 @@
 
 **本机侧**：
 
-- Docker（支持 `buildx`；Windows 用 PowerShell 跑 `.ps1`，其他 shell 直接用等价的 docker 命令）
+- Docker（支持 `buildx`）；教程全部用原生 docker / curl / python 命令，任何系统、任何终端通用
 - Python ≥ 3.9，训练与验证环节需要：
 
 ```bash
@@ -49,28 +47,26 @@ pip install xgboost scikit-learn pandas esdk-obs-python requests
 
 不需要任何云上凭证，用镜像里内置的兜底模型先把服务跑起来：
 
-```powershell
+```bash
 git clone https://github.com/hhuang37/xgboost-modelarts-demo.git
 cd xgboost-modelarts-demo
 
-# 一键：构建 + 启动 + 打印 /health、推理结果、容器日志
-.\build_and_run.ps1 test-local
-```
-
-等价的原始命令（非 PowerShell 环境）：
-
-```bash
+# 构建镜像（--provenance=false 必须加：不加会产出 OCI Image Index，SWR/ModelArts 拒收）
 docker buildx build --platform linux/amd64 --provenance=false -t xgb-bc:obs-minimal-v5 .
+
+# 起服务（无任何凭证 → 本地签名模式 + 内置兜底模型）
 docker run --rm -d --name xgb-0817-test -p 18081:8080 xgb-bc:obs-minimal-v5
+
+# 健康检查 + 推理 + 看启动日志
 curl http://127.0.0.1:18081/health
 curl -X POST http://127.0.0.1:18081/ -H "Content-Type: application/json" --data-binary @sample_request.json
+docker logs xgb-0817-test
+
+# 用完清理
+docker rm -f xgb-0817-test
 ```
 
 正常输出：`/health` 返回 `"sync_mode": "local-signature"`、`"model_origin": "baked"`（无凭证 → 本地签名模式 + 内置模型），推理返回 `[{"predictresult": 0.05...}]`。
-
-> `--provenance=false` 必须加：不加的话 buildx 产出 OCI Image Index，SWR / ModelArts 会拒收（`Invalid image, fail to parse 'manifest.json'`）。
->
-> 用完清理：`docker rm -f xgb-0817-test`。
 
 想看真正的热切换（OBS 模式）→ 走下面的完整流程。
 
@@ -137,19 +133,19 @@ print("上传完成")
 
 ### 第 3 步 · 制作镜像
 
-```powershell
-.\build_and_run.ps1          # 等价于 docker buildx build --platform linux/amd64 --provenance=false -t xgb-bc:obs-minimal-v5 .
+```bash
+docker buildx build --platform linux/amd64 --provenance=false -t xgb-bc:obs-minimal-v5 .
 ```
 
 说明：镜像构建时会把 `model/xgboost_breast_cancer.json` 打进去作**内置兜底模型**。想换成自己的模型，替换该文件后重新构建即可；不换也行，兜底模型只在 OBS 不可用时才被使用。
 
 ### 第 4 步 · 推送镜像到 SWR
 
-```powershell
+```bash
 docker login -u cn-north-4@<IAM账号> swr.cn-north-4.myhuaweicloud.com
 
-.\build_and_run.ps1 push -SwrRepo swr.cn-north-4.myhuaweicloud.com/<组织>/xgb-bc
-# 产出 tag: swr.cn-north-4.myhuaweicloud.com/<组织>/xgb-bc:obs-minimal-v5-0817
+docker tag xgb-bc:obs-minimal-v5 swr.cn-north-4.myhuaweicloud.com/<组织>/xgb-bc:obs-minimal-v5-0817
+docker push swr.cn-north-4.myhuaweicloud.com/<组织>/xgb-bc:obs-minimal-v5-0817
 ```
 
 推送完成后在 SWR 控制台确认仓库、tag、架构 amd64 无误。
@@ -183,53 +179,16 @@ ModelArts 在线服务用 SWR 里的这个镜像创建，要点：
 
 ### 第 6 步 · 用 Python 检查结果（含热切换闭环）
 
-最小验证脚本——健康检查 → 基线推理 → 替换 OBS 模型 → 再推理 → 对比预测值：
+验证全部在 **`verify_hotswap.ipynb`** 里完成（Jupyter 打开后，按 §1 把服务地址与凭证填好，依次运行）：
 
-```python
-# verify_demo.py
-import json, time, requests, urllib3
-from obs import ObsClient
-
-INFER_URL  = "https://<你的服务地址>/v2/infer/<服务ID>/"   # 本地 docker 用 http://127.0.0.1:18081/
-API_KEY    = "<ModelArts API Key>"                        # 本地 docker 留空字符串 ""
-OBS_BUCKET = "<你的桶名>"
-OBS_KEY    = "models/xgboost_breast_cancer.json"
-OLD_MODEL  = "model_out/old/xgboost_breast_cancer.json"
-NEW_MODEL  = "model_out/new/xgboost_breast_cancer.json"
-AK, SK     = "<你的AK>", "<你的SK>"
-
-urllib3.disable_warnings()   # 自签名证书的私有化环境才需要 verify=False
-H = ({"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
-     if API_KEY else {"Content-Type": "application/json"})
-body = json.load(open("sample_request.json", encoding="utf-8"))
-
-def infer():
-    r = requests.post(INFER_URL, headers=H, json=body, timeout=30, verify=False)
-    r.raise_for_status()
-    return float(r.json()[0]["predictresult"])
-
-health = requests.get(INFER_URL + "health", headers=H, timeout=30, verify=False).json()
-print("model_source:", health["model_source"])            # obs:// 开头 = 已从 OBS 同步
-p_old = infer()
-
-obs = ObsClient(access_key_id=AK, secret_access_key=SK,
-                server="https://obs.cn-north-4.myhuaweicloud.com")
-obs.deleteObject(OBS_BUCKET, OBS_KEY)                     # 先删再传（两步走，确保变更被感知）
-resp = obs.putFile(OBS_BUCKET, OBS_KEY, NEW_MODEL)
-assert resp.status < 300, f"putFile failed: status={resp.status}"
-time.sleep(3)
-
-p_new = infer()
-print(f"换模型前: {p_old:.16f}")
-print(f"换模型后: {p_new:.16f}")
-assert abs(p_new - p_old) > 1e-6, "热切换未生效！"
-print("✅ 热切换成功：服务未重启，预测值已变化")
-obs.close()
-```
-
-完整版（含训练两套模型、本地/云上双模式、详细排障）见 **`verify_hotswap.ipynb`**。
+1. **§3 健康检查**——`/health` 的 `model_source` 以 `obs://` 开头，确认模型已从 OBS 同步
+2. **§4 基线推理**——记下当前 `predictresult`
+3. **§5 热切换验证**——notebook 用"先 `deleteObject` 再 `putFile`"替换 OBS 上的模型对象，再推理一次
+4. **§5 步骤 3 自动判定**——前后预测值差异 > 1e-6 即热切换成功（服务全程未重启）
 
 > **判定标准**：热切换以"换模型前后预测值发生变化"为准。参考值：旧模型 ≈ `0.050855...`，新模型 ≈ `0.118065...`；你的预测绝对值以自己训练结果为准，不要对抄。
+>
+> 本地 docker 同样可验证：服务地址填 `http://127.0.0.1:18081/`，notebook 会自动切换成本地模式。
 
 ## 工作原理
 
@@ -254,8 +213,8 @@ obs.close()
 
 | 验证项 | 方式 | 结果 |
 |---|---|---|
-| 本地·真凭证全链路 | `.\verify_fullchain.ps1 -Ak <AK> -Sk <SK>` | 全部 PASS：探活 200、启动下载、换模型后预测值变化、日志出现 `[hot-reload]`、重启走启动下载路径、OBS 对象恢复原状 |
-| 推送 SWR | `.\build_and_run.ps1 push -SwrRepo ...` | tag `obs-minimal-v5-0817` 推送成功，控制台确认 amd64 |
+| 本地·真凭证全链路 | 本地 docker 以 OBS API 模式启动（`docker run -e OBS_BUCKET=... -e AccessKeyID=... -e SecretAccessKey=... ...`），`verify_hotswap.ipynb` 指向 `http://127.0.0.1:18081/` | 全部 PASS：探活 200、启动下载、换模型后预测值变化、日志出现 `[hot-reload]`、重启走启动下载路径、OBS 对象恢复原状 |
+| 推送 SWR | `docker tag` + `docker push`（tag `obs-minimal-v5-0817`） | 推送成功，控制台确认 amd64 |
 | ModelArts 在线部署 | 统一镜像部署在线服务 | 服务运行中，启动日志 `[obs-probe] ok`，`/health` 正常 |
 | 云上热切换闭环 | `verify_hotswap.ipynb`（云端服务） | 不重启服务，替换 OBS 对象后预测值变化 |
 
