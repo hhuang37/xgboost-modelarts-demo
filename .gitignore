@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+obs_backup/
+model_mount/
+new_model_for_test.json
