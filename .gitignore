@@ -1,5 +1,7 @@
+# 0817_new_dev / xgboost-modelarts-demo — 本地运行教程与验证脚本的产物
 __pycache__/
 *.pyc
 obs_backup/
 model_mount/
+model_out/
 new_model_for_test.json

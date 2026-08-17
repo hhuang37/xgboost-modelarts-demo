@@ -1,99 +1,275 @@
-# XGBoost ModelArts 统一推理镜像 — 内置兜底模型 + OBS 热切换
+# XGBoost 乳腺癌分类 · 华为云 ModelArts 在线推理 + 零停机热切换
 
-> 设计决策:单一镜像——模型打入镜像作兜底,OBS 热切换作运行时可选增强;OBS 任何失败只降级、不阻塞启动。
+基于 XGBoost 的乳腺癌（breast cancer）二分类模型，打包成**单一 Docker 镜像**部署到华为云 ModelArts 在线推理服务。核心演示能力是**零停机热切换**：把新模型传到 OBS，服务不用重启，下一次推理请求自动用新模型。
 
-本目录是统一后的推理服务:**一个镜像同时跑通"自己的 MA"和"公司 MA"**。
+设计决策一句话：**模型打进镜像作内置兜底，OBS 热切换作运行时增强**——OBS 连不上、凭证缺失时服务照样启动、照样推理，绝不因为云上故障挂掉。
 
-- 模型打进镜像作**内置兜底**——OBS 连不上、凭证缺失,服务照样启动、照样推理;
-- 配了 AK/SK 就自动启用 **OBS API 模式**,启动探活 + 每次请求前比对 OBS 对象大小,实现零停机**热切换**;
-- 启动日志和 `/health` 明确回答"到底连上 OBS 没有"(本次改造的核心需求)。
+## 特性
 
-与旧目录的关系:`0802_start_from_scratch/app_obs.py` 是代码基础(输入校验、热切换骨架原样保留);
-`modelarts_minimal` 的镜像契约(ma-user 1000:100、gunicorn、baked model)是镜像基础。
+- **零停机热切换**：替换 OBS 上的模型对象，下一次请求即生效，无需重启服务/重建容器
+- **内置兜底模型**：镜像里自带一份模型，OBS 不可用时自动降级，服务永远能启动
+- **双模式自动检测**：按环境变量自动选择 `obs-api`（OBS API 模式）或 `local-signature`（本地签名模式），启动日志说明原因
+- **可观测**：启动日志逐条打印 OBS 探活结果，`/health` 实时回答"到底连上 OBS 没有"
+- **一键脚本**：构建 / 本地验证 / 推 SWR（`build_and_run.ps1`），真凭证全链路验收（`verify_fullchain.ps1`）
 
-## 文件清单
+## 仓库结构
 
-| 文件 | 角色 |
+| 文件 / 目录 | 角色 |
 |---|---|
-| `app.py` | 统一推理服务(模式自动检测 + 探活日志 + 兜底) |
-| `Dockerfile` | python:3.11-slim + xgboost + esdk-obs-python + 内置模型 |
-| `model/xgboost_breast_cancer.json` | 内置兜底模型(旧模型,100 棵树,91225B) |
-| `model_mount/` | 本地 `-v` 挂载验证热切换用(内容=旧模型) |
+| `app.py` | 统一推理服务（Flask + gunicorn）：模式自动检测、启动探活、热切换、兜底 |
+| `Dockerfile` | python:3.11-slim + xgboost + esdk-obs-python，内置兜底模型，满足 ModelArts 镜像契约（ma-user 1000:100） |
+| `model/xgboost_breast_cancer.json` | 内置兜底模型（基线模型，100 棵树） |
 | `sample_request.json` | 30 特征标准推理请求体 |
-| `build_and_run.ps1` | 构建 / 本地两种模式验证 / 推 SWR 一键脚本 |
+| `build_and_run.ps1` | 一键脚本：仅构建 / 本地两种模式验证 / 推送 SWR |
+| `verify_fullchain.ps1` | 真凭证本地全链路验收（备份→探活→推理→换模型→重启→恢复 OBS） |
+| `obs_tool.py` | 容器内 OBS 小工具：info / backup / replace / delete |
+| `verify_hotswap.ipynb` | 新手向完整验证 notebook：训练两套模型 → 验证热切换闭环 |
+| `model_out/` | 教程训练产物目录（自己跑第 1 步时生成，已 gitignore） |
+| `model_mount/` | 本地 `-v` 挂载验证用（自建即可：把 `model/` 里的模型复制进去，已 gitignore） |
 
-## 同步模式矩阵(自动检测,启动日志会说明原因)
+## 准备工作
 
-| 环境变量 | 模式 | 行为 |
-|---|---|---|
-| `OBS_BUCKET` + `AccessKeyID` + `SecretAccessKey` 齐全 | `obs-api` | 启动探活 OBS 并下载/比对;每次请求前查 OBS 大小,不一致重下载重加载(**OBS API 模式**) |
-| 任一凭证缺失,或 `OBS_HOT_RELOAD_DISABLE=true` | `local-signature` | 只看本地模型文件 (mtime, size),变化即重载(**本地签名模式**)。适用存储挂载 / 本地 `-v` |
-| — 公共行为 — | | OBS 任何失败都降级到内置兜底模型并打 WARNING,**不阻塞启动**;只有"完全没有模型可服务"才让容器失败 |
+**华为云侧**（区域默认 `cn-north-4`，换区域需同步改 `OBS_ENDPOINT`）：
 
-其他变量:`MODEL_PATH`(默认 `/opt/model/xgboost_breast_cancer.json`,与内置路径一致)、
-`OBS_ENDPOINT`(默认 cn-north-4,两套环境同区域)、`OBS_KEY`、`OBS_DOWNLOAD_FORCE`、`OBS_DOWNLOAD_TIMEOUT`。
+- 一个 IAM 用户的 AK/SK（需对其 OBS 桶有读写权限）：控制台 → 我的凭证 → 访问密钥
+- 一个 OBS 桶（控制台创建即可），本教程用 `<你的桶名>` 代指
+- SWR 镜像仓库的组织名，本教程用 `<组织>` 代指
+- ModelArts 在线服务（部署环节用）
 
-## 怎么确认"启动时 OBS 连没连上"
+**本机侧**：
 
-1. **看启动日志**(ModelArts 服务日志里搜 `xgb-obs`):
-   - `[startup] obs config: endpoint=... bucket=... key=... ak=FAKE****` — 打印解析后的配置,AK 掩码
-   - `[startup] sync mode resolved: obs-api (OBS_BUCKET + AccessKeyID + SecretAccessKey configured)` — 进了哪种模式、为什么
-   - `[obs-probe] ok status=200 remote_size=... latency_ms=...` 或 `[obs-probe] FAILED status=403 ...` — 探活结果
-   - `[startup] OBS unreachable (status=...) — FALLING BACK TO BAKED-IN MODEL` — 降级兜底(醒目 WARNING)
-2. **看 `/health`**:`sync_mode` / `sync_mode_reason` / `model_origin`(`obs` 或 `baked`)/ `obs.last_check_ok` / `obs.last_status_code` / `obs.error`。
+- Docker（支持 `buildx`；Windows 用 PowerShell 跑 `.ps1`，其他 shell 直接用等价的 docker 命令）
+- Python ≥ 3.9，训练与验证环节需要：
 
-## 本地验证(2026-08-17 已全部跑通)
-
-```powershell
-cd D:\soft\xgboos_demo\0817_new_dev
-
-# 构建(--provenance=false 必须加,否则 SWR 拒收 OCI Index)
-.\build_and_run.ps1                # 仅构建
-.\build_and_run.ps1 test-local     # 本地签名模式:无凭证→兜底模型推理
-.\build_and_run.ps1 test-obs -Ak <真AK> -Sk <真SK>   # OBS API 模式全链路
+```bash
+pip install xgboost scikit-learn pandas esdk-obs-python requests
 ```
 
-已验证的三条路径:
+## 快速开始：本地 3 分钟跑通（制作镜像 → 起服务 → 推理）
 
-| 场景 | 结果 |
-|---|---|
-| 无任何 OBS 凭证启动 | `local-signature` 模式,内置模型推理正常(`/health.model_origin=baked`) |
-| `-v model_mount:/opt/model` 挂载后换新模型再推理 | 预测 `0.0509 → 0.1181`,日志出现 `[hot-reload] local signature changed ... reloading` |
-| 假 AK/SK 启动(真实网络打到 OBS) | 探活 403,WARNING 降级兜底,服务健康,`/health.obs.last_status_code=403`,每次请求持续重试 |
+不需要任何云上凭证，用镜像里内置的兜底模型先把服务跑起来：
 
-> 注意:`model_out` 下的模型文件是 2026-08-02 重新训练的,旧模型的预测值与
-> 早期项目文档里记录的 `0.00926...` 不同(现为 `0.05085...`),
-> 新模型值一致(`0.11806...`)。**热切换验证以"换模型前后预测值发生变化"为准,不要对抄绝对值。**
+```powershell
+git clone https://github.com/hhuang37/xgboost-modelarts-demo.git
+cd xgboost-modelarts-demo
 
-## 推送到 SWR 并部署
+# 一键：构建 + 启动 + 打印 /health、推理结果、容器日志
+.\build_and_run.ps1 test-local
+```
+
+等价的原始命令（非 PowerShell 环境）：
+
+```bash
+docker buildx build --platform linux/amd64 --provenance=false -t xgb-bc:obs-minimal-v5 .
+docker run --rm -d --name xgb-0817-test -p 18081:8080 xgb-bc:obs-minimal-v5
+curl http://127.0.0.1:18081/health
+curl -X POST http://127.0.0.1:18081/ -H "Content-Type: application/json" --data-binary @sample_request.json
+```
+
+正常输出：`/health` 返回 `"sync_mode": "local-signature"`、`"model_origin": "baked"`（无凭证 → 本地签名模式 + 内置模型），推理返回 `[{"predictresult": 0.05...}]`。
+
+> `--provenance=false` 必须加：不加的话 buildx 产出 OCI Image Index，SWR / ModelArts 会拒收（`Invalid image, fail to parse 'manifest.json'`）。
+>
+> 用完清理：`docker rm -f xgb-0817-test`。
+
+想看真正的热切换（OBS 模式）→ 走下面的完整流程。
+
+## 完整上云流程（新手向六步）
+
+从训练模型，到把模型上传 OBS、制作镜像、推 SWR、在线部署，最后用 Python 代码检查结果。
+
+### 第 1 步 · 训练模型
+
+训练两套模型：**旧模型**（基线，和镜像内置的一致）与**新模型**（超参不同，用于验证热切换时能看出预测值变化）：
+
+```python
+# train.py
+from pathlib import Path
+import pandas as pd
+from sklearn.datasets import load_breast_cancer
+from sklearn.model_selection import train_test_split
+from xgboost import XGBClassifier
+
+data = load_breast_cancer()
+X = pd.DataFrame(data.data, columns=data.feature_names)
+y = pd.Series(data.target, name="target")
+
+def train(params, random_state, out_path):
+    X_tr, X_te, y_tr, y_te = train_test_split(
+        X, y, test_size=0.2, random_state=random_state, stratify=y)
+    m = XGBClassifier(objective="binary:logistic", eval_metric="logloss",
+                      tree_method="hist", n_jobs=-1, random_state=random_state,
+                      **params)
+    m.fit(X_tr, y_tr, verbose=False)
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    m.save_model(out_path)   # 服务端只认 XGBoost 的 json 格式
+    print(f"saved: {out_path} ({Path(out_path).stat().st_size:,} bytes)")
+
+train(dict(n_estimators=100, max_depth=3, learning_rate=0.1,
+           subsample=0.8, colsample_bytree=0.8),
+      random_state=42, out_path="model_out/old/xgboost_breast_cancer.json")
+
+train(dict(n_estimators=250, max_depth=6, learning_rate=0.01,
+           subsample=0.6, colsample_bytree=0.5, min_child_weight=5,
+           reg_alpha=0.5, reg_lambda=2.0, gamma=0.5),
+      random_state=2024, out_path="model_out/new/xgboost_breast_cancer.json")
+```
+
+### 第 2 步 · 上传模型到 OBS
+
+先把**旧模型**传上去（服务部署后第一次启动会从 OBS 同步它）：
+
+```python
+# upload.py
+from obs import ObsClient
+
+AK, SK = "<你的AK>", "<你的SK>"
+client = ObsClient(access_key_id=AK, secret_access_key=SK,
+                   server="https://obs.cn-north-4.myhuaweicloud.com")
+resp = client.putFile("<你的桶名>", "models/xgboost_breast_cancer.json",
+                      "model_out/old/xgboost_breast_cancer.json")
+assert resp.status < 300, f"上传失败: status={resp.status}, {resp.errorMessage}"
+client.close()
+print("上传完成")
+```
+
+对象 key 用默认的 `models/xgboost_breast_cancer.json`，后面部署时的 `OBS_KEY` 默认值就是这个，不用改。
+
+### 第 3 步 · 制作镜像
+
+```powershell
+.\build_and_run.ps1          # 等价于 docker buildx build --platform linux/amd64 --provenance=false -t xgb-bc:obs-minimal-v5 .
+```
+
+说明：镜像构建时会把 `model/xgboost_breast_cancer.json` 打进去作**内置兜底模型**。想换成自己的模型，替换该文件后重新构建即可；不换也行，兜底模型只在 OBS 不可用时才被使用。
+
+### 第 4 步 · 推送镜像到 SWR
 
 ```powershell
 docker login -u cn-north-4@<IAM账号> swr.cn-north-4.myhuaweicloud.com
+
 .\build_and_run.ps1 push -SwrRepo swr.cn-north-4.myhuaweicloud.com/<组织>/xgb-bc
-# 产出 tag:<组织>/xgb-bc:obs-minimal-v5-0817
+# 产出 tag: swr.cn-north-4.myhuaweicloud.com/<组织>/xgb-bc:obs-minimal-v5-0817
 ```
 
-### 公司 MA 部署要点(吸取 xgb-bc:obs0802v4 的教训)
+推送完成后在 SWR 控制台确认仓库、tag、架构 amd64 无误。
 
-1. **配置完全照抄 xgb-minimal:v1-0817 那次成功部署**(规格、调度策略、资源池、不配存储挂载)。
-   新镜像不需要存储挂载——模型内置,AK/SK 走环境变量。
-2. 环境变量:`OBS_BUCKET` / `AccessKeyID` / `SecretAccessKey`(均已确认公司环境允许明文注入)。
-3. 健康检查:HTTP `GET /health`。
-4. 部署后先看启动日志里的 `[obs-probe]` 行确认 OBS 连通,再验证推理。
+### 第 5 步 · ModelArts 在线部署（环境变量怎么填）
 
-### 热切换验证
+ModelArts 在线服务用 SWR 里的这个镜像创建，要点：
 
-替换 OBS 对象建议沿用"先 `deleteObject` 再 `putFile`"两步走(obsfs 的 mtime 坑),
-验证工具随意(curl / Postman / notebook 均可),带上服务的公网调用 URL、Token 和 OBS AK/SK 即可。
+- 容器端口 **8080**（gunicorn 绑定 0.0.0.0:8080）
+- 健康检查：HTTP `GET /health`
+- **不需要存储挂载**：模型已内置，OBS 同步走环境变量配置的 AK/SK
+- 规格从小开始（1 副本、默认调度即可）
 
-## 排障:服务起不来 + `MountVolume.SetUp failed ... configmap "cm-infer-..." not found`
+环境变量是 `app.py` 的全部开关，按需填写：
 
-这是 **Kubernetes 平台层错误,发生在容器启动之前**——你的代码一行都没执行
-(卷挂载失败 → Pod 起不来 → 没有应用日志)。与镜像内容无关(xgb-minimal 同环境能起、
-xgb-bc:obs0802v4 不能起,差异在服务实例的编排,不在镜像字节)。
+| 环境变量 | 默认值 | 怎么填 | 说明 |
+|---|---|---|---|
+| `OBS_BUCKET` | 空 | **部署时必填** | OBS 桶名。与 AK/SK 同时配置才启用 OBS API 模式（热切换） |
+| `AccessKeyID` | 空 | **部署时必填** | IAM 用户 AK |
+| `SecretAccessKey` | 空 | **部署时必填** | IAM 用户 SK |
+| `OBS_KEY` | `models/xgboost_breast_cancer.json` | 通常不改 | 模型对象在桶里的 key，和第 2 步上传的一致即可 |
+| `OBS_ENDPOINT` | `https://obs.cn-north-4.myhuaweicloud.com` | 换区域才改 | OBS 区域端点 |
+| `MODEL_PATH` | `/opt/model/xgboost_breast_cancer.json` | **别动** | 容器内模型路径，内置兜底模型就在这个位置 |
+| `OBS_HOT_RELOAD_DISABLE` | `false` | **别动** | `true` = 强制本地签名模式（禁用 OBS 同步） |
+| `OBS_DOWNLOAD_FORCE` | `false` | **别动** | `true` = 每次启动强制重新下载 OBS 模型 |
+| `OBS_DOWNLOAD_TIMEOUT` | `30` | 网络慢可调大 | 单次 OBS 请求超时（秒） |
 
-处理顺序:
+**判断规则一句话**：`OBS_BUCKET` + `AccessKeyID` + `SecretAccessKey` 三个都填 = OBS API 模式（支持热切换）；缺任何一个 = 本地签名模式（只用内置/挂载的模型，不会连 OBS）。
 
-1. **删除服务重建**——configmap 丢失常是平台 operator 偶发,重建即好;
-2. 重建时**对照能起来的那次配置逐项核对**(规格 / 调度策略 / 副本数 / 资源池 / 存储挂载);
-3. 仍失败 → 拿服务 ID + 事件报错原文找公司 MA 管理员或提华为工单(平台侧才能修)。
+部署后先看服务启动日志（搜 `xgb-obs`）确认有 `[obs-probe] ok status=200`，再往下验证。
+
+### 第 6 步 · 用 Python 检查结果（含热切换闭环）
+
+最小验证脚本——健康检查 → 基线推理 → 替换 OBS 模型 → 再推理 → 对比预测值：
+
+```python
+# verify_demo.py
+import json, time, requests, urllib3
+from obs import ObsClient
+
+INFER_URL  = "https://<你的服务地址>/v2/infer/<服务ID>/"   # 本地 docker 用 http://127.0.0.1:18081/
+API_KEY    = "<ModelArts API Key>"                        # 本地 docker 留空字符串 ""
+OBS_BUCKET = "<你的桶名>"
+OBS_KEY    = "models/xgboost_breast_cancer.json"
+OLD_MODEL  = "model_out/old/xgboost_breast_cancer.json"
+NEW_MODEL  = "model_out/new/xgboost_breast_cancer.json"
+AK, SK     = "<你的AK>", "<你的SK>"
+
+urllib3.disable_warnings()   # 自签名证书的私有化环境才需要 verify=False
+H = ({"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
+     if API_KEY else {"Content-Type": "application/json"})
+body = json.load(open("sample_request.json", encoding="utf-8"))
+
+def infer():
+    r = requests.post(INFER_URL, headers=H, json=body, timeout=30, verify=False)
+    r.raise_for_status()
+    return float(r.json()[0]["predictresult"])
+
+health = requests.get(INFER_URL + "health", headers=H, timeout=30, verify=False).json()
+print("model_source:", health["model_source"])            # obs:// 开头 = 已从 OBS 同步
+p_old = infer()
+
+obs = ObsClient(access_key_id=AK, secret_access_key=SK,
+                server="https://obs.cn-north-4.myhuaweicloud.com")
+obs.deleteObject(OBS_BUCKET, OBS_KEY)                     # 先删再传（两步走，确保变更被感知）
+resp = obs.putFile(OBS_BUCKET, OBS_KEY, NEW_MODEL)
+assert resp.status < 300, f"putFile failed: status={resp.status}"
+time.sleep(3)
+
+p_new = infer()
+print(f"换模型前: {p_old:.16f}")
+print(f"换模型后: {p_new:.16f}")
+assert abs(p_new - p_old) > 1e-6, "热切换未生效！"
+print("✅ 热切换成功：服务未重启，预测值已变化")
+obs.close()
+```
+
+完整版（含训练两套模型、本地/云上双模式、详细排障）见 **`verify_hotswap.ipynb`**。
+
+> **判定标准**：热切换以"换模型前后预测值发生变化"为准。参考值：旧模型 ≈ `0.050855...`，新模型 ≈ `0.118065...`；你的预测绝对值以自己训练结果为准，不要对抄。
+
+## 工作原理
+
+### 同步模式矩阵（自动检测，启动日志会说明原因）
+
+| 环境变量 | 模式 | 行为 |
+|---|---|---|
+| `OBS_BUCKET` + `AccessKeyID` + `SecretAccessKey` 齐全 | `obs-api` | 启动探活 OBS 并下载/比对；每次请求前查 OBS 对象大小，不一致就重新下载并重加载（**OBS API 模式**） |
+| 任一凭证缺失，或 `OBS_HOT_RELOAD_DISABLE=true` | `local-signature` | 只看本地模型文件的 (mtime, size)，变化即重载（**本地签名模式**）。适用存储挂载 / 本地 `-v` 挂载 |
+| — 公共行为 — | | OBS 任何失败都降级到内置兜底模型并打 WARNING，**不阻塞启动**；只有"完全没有模型可服务"才让容器失败 |
+
+### 怎么确认"启动时 OBS 连没连上"
+
+1. **看启动日志**（ModelArts 服务日志里搜 `xgb-obs`）：
+   - `[startup] obs config: endpoint=... bucket=... key=... ak=FAKE****` — 解析后的配置，AK 掩码
+   - `[startup] sync mode resolved: obs-api (...)` — 进了哪种模式、为什么
+   - `[obs-probe] ok status=200 remote_size=...` 或 `[obs-probe] FAILED status=403 ...` — 探活结果
+   - `[startup] OBS unreachable (status=...) — FALLING BACK TO BAKED-IN MODEL` — 降级兜底（醒目 WARNING）
+2. **看 `/health`**：`sync_mode` / `sync_mode_reason` / `model_origin`（`obs` 或 `baked`）/ `obs.last_check_ok` / `obs.last_status_code` / `obs.error`
+
+## 已验证清单（2026-08-17 全部跑通）
+
+| 验证项 | 方式 | 结果 |
+|---|---|---|
+| 本地·真凭证全链路 | `.\verify_fullchain.ps1 -Ak <AK> -Sk <SK>` | 全部 PASS：探活 200、启动下载、换模型后预测值变化、日志出现 `[hot-reload]`、重启走启动下载路径、OBS 对象恢复原状 |
+| 推送 SWR | `.\build_and_run.ps1 push -SwrRepo ...` | tag `obs-minimal-v5-0817` 推送成功，控制台确认 amd64 |
+| ModelArts 在线部署 | 统一镜像部署在线服务 | 服务运行中，启动日志 `[obs-probe] ok`，`/health` 正常 |
+| 云上热切换闭环 | `verify_hotswap.ipynb`（云端服务） | 不重启服务，替换 OBS 对象后预测值变化 |
+
+## 排障
+
+| 现象 | 原因 | 解决 |
+|---|---|---|
+| 云上替换 OBS 对象后热切换不生效 | OBS 文件系统的 mtime 不刷新 | 沿用"先 `deleteObject` 再 `putFile`"两步走（本仓库验证代码已实现） |
+| 本地 docker 热切换不生效 | 本地签名模式需要 `-v` 挂载模型目录 | 重建容器加 `-v model_mount:/opt/model`，替换挂载目录里的模型文件 |
+| `/health` 的 `model_source` 不以 `obs://` 开头 | `OBS_BUCKET`/AK/SK 没配齐，没进 OBS API 模式 | 三个环境变量配齐后重启；看 `sync_mode_reason` 说明缺哪个 |
+| `[obs-probe] FAILED status=403` | AK/SK 无效或无该桶权限 | 核对 AK/SK 与桶策略；服务仍以兜底模型运行，不会挂 |
+| 推理 401/403 | API Key 无效 | 检查请求头的 Bearer Token |
+| 服务起不来 + `MountVolume.SetUp failed ... configmap ... not found` | Kubernetes 平台层错误，发生在容器启动之前，与镜像内容无关 | 删除服务重建；仍失败则对照能正常运行的配置逐项核对（规格/调度/副本/资源池/存储挂载），或提工单找平台管理员 |
+
+## License
+
+仅用于个人学习与演示。
