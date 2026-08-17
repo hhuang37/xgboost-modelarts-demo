@@ -130,16 +130,16 @@ ModelArts 在线服务用 SWR 里的这个镜像创建，要点：
 
 ```text
 obs://xgb-bc-bucket/models/xgboost_breast_cancer.json
-└────OBS_BUCKET────┘└────────────OBS_KEY────────────┘
+      └─OBS_BUCKET┘ └────────────OBS_KEY────────────┘
 ```
 
-> 域名 `obs.cn-north-4.myhuaweicloud.com` 对应 `OBS_ENDPOINT`。部署时把 `OBS_BUCKET`、`OBS_KEY`、`OBS_ENDPOINT` 换成自己的即可。
+> `obs://` 只是 OBS 地址的协议前缀，**不属于任何参数**；域名 `obs.cn-north-4.myhuaweicloud.com` 对应 `OBS_ENDPOINT`。部署时把 `OBS_BUCKET`、`OBS_KEY`、`OBS_ENDPOINT` 换成自己的即可。
 
 环境变量是 `app.py` 的全部开关，按需填写：
 
 | 环境变量 | 默认值 | 怎么填 | 说明 |
 |---|---|---|---|
-| `OBS_BUCKET` | 空 | **部署时必填** | OBS 桶名。与 AK/SK 同时配置才启用 OBS API 模式（热切换） |
+| `OBS_BUCKET` | 空（参考值：`xgb-bc-bucket`） | **部署时必填** | 你的 OBS 桶名（就是地址 `obs://` 后面、第一个 `/` 之前那段）。与 AK/SK 同时配置才启用 OBS API 模式（热切换） |
 | `AccessKeyID` | 空 | **部署时必填** | IAM 用户 AK |
 | `SecretAccessKey` | 空 | **部署时必填** | IAM 用户 SK |
 | `OBS_KEY` | `models/xgboost_breast_cancer.json` | 通常不改 | 模型对象在桶里的 key，和第 2 步上传的一致即可 |
