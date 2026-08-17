@@ -22,6 +22,7 @@
 | `sample_request.json` | 30 特征标准推理请求体 |
 | `obs_tool.py` | 容器内 OBS 小工具（可选）：在容器里查 / 备份 / 替换 / 删除 OBS 对象，宿主机装好 Docker 即可用 |
 | `verify_hotswap.ipynb` | 新手向完整验证 notebook：训练两套模型 → 健康检查 → 基线推理 → 热切换闭环 |
+| `train_upload.ipynb` | 第 1/2 步用：训练两套模型并上传到 OBS（ModelArts Notebook 优先，本地 Jupyter 亦可） |
 | `model_out/` | 教程训练产物目录（自己跑第 1 步时生成，已 gitignore） |
 | `model_mount/` | 本地 `-v` 挂载验证用（自建即可：把 `model/` 里的模型复制进去，已 gitignore） |
 
@@ -74,62 +75,28 @@ docker rm -f xgb-0817-test
 
 从训练模型，到把模型上传 OBS、制作镜像、推 SWR、在线部署，最后用 Python 代码检查结果。
 
-### 第 1 步 · 训练模型
+### 第 1 步 · 训练模型（在 ModelArts Notebook 上跑）
 
-训练两套模型：**旧模型**（基线，和镜像内置的一致）与**新模型**（超参不同，用于验证热切换时能看出预测值变化）：
+打开 **`train_upload.ipynb`**（上传到 ModelArts 的 Notebook 运行；本地 Jupyter 也能跑）：
 
-```python
-# train.py
-from pathlib import Path
-import pandas as pd
-from sklearn.datasets import load_breast_cancer
-from sklearn.model_selection import train_test_split
-from xgboost import XGBClassifier
+1. **§1 配置区**：填 `OBS_BUCKET`（绑了 OBS 委托的 Notebook，AK/SK 留空即可）
+2. **§2–§4**：自动处理 ModelArts 环境的依赖安装与 moxing 认证
+3. **§5 / §6**：训练两套模型，产物保存在 `model_out/old/` 与 `model_out/new/`
 
-data = load_breast_cancer()
-X = pd.DataFrame(data.data, columns=data.feature_names)
-y = pd.Series(data.target, name="target")
-
-def train(params, random_state, out_path):
-    X_tr, X_te, y_tr, y_te = train_test_split(
-        X, y, test_size=0.2, random_state=random_state, stratify=y)
-    m = XGBClassifier(objective="binary:logistic", eval_metric="logloss",
-                      tree_method="hist", n_jobs=-1, random_state=random_state,
-                      **params)
-    m.fit(X_tr, y_tr, verbose=False)
-    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
-    m.save_model(out_path)   # 服务端只认 XGBoost 的 json 格式
-    print(f"saved: {out_path} ({Path(out_path).stat().st_size:,} bytes)")
-
-train(dict(n_estimators=100, max_depth=3, learning_rate=0.1,
-           subsample=0.8, colsample_bytree=0.8),
-      random_state=42, out_path="model_out/old/xgboost_breast_cancer.json")
-
-train(dict(n_estimators=250, max_depth=6, learning_rate=0.01,
-           subsample=0.6, colsample_bytree=0.5, min_child_weight=5,
-           reg_alpha=0.5, reg_lambda=2.0, gamma=0.5),
-      random_state=2024, out_path="model_out/new/xgboost_breast_cancer.json")
-```
+| 模型 | 超参 | random_state | 作用 |
+|---|---|---|---|
+| 旧（基线） | 100 棵树、max_depth 3、learning_rate 0.1 | 42 | 与镜像内置模型一致 |
+| 新 | 250 棵树、max_depth 6、learning_rate 0.01、加正则化 | 2024 | 预测值与旧模型不同，验证热切换时能看到变化 |
 
 ### 第 2 步 · 上传模型到 OBS
 
-先把**旧模型**传上去（服务部署后第一次启动会从 OBS 同步它）：
+同一本 notebook 的 **§7**：`ACTIVE_MODEL = "old"` 时，把基线模型传到 OBS 单一目标路径：
 
-```python
-# upload.py
-from obs import ObsClient
+- 目标路径：`obs://<你的桶名>/models/xgboost_breast_cancer.json`
+- 这个 key（`models/xgboost_breast_cancer.json`）就是部署时 `OBS_KEY` 的默认值，不用改
+- 优先走 moxing（委托自动认证）；没有委托时自动退到 esdk-obs-python（需要 AK/SK）
 
-AK, SK = "<你的AK>", "<你的SK>"
-client = ObsClient(access_key_id=AK, secret_access_key=SK,
-                   server="https://obs.cn-north-4.myhuaweicloud.com")
-resp = client.putFile("<你的桶名>", "models/xgboost_breast_cancer.json",
-                      "model_out/old/xgboost_breast_cancer.json")
-assert resp.status < 300, f"上传失败: status={resp.status}, {resp.errorMessage}"
-client.close()
-print("上传完成")
-```
-
-对象 key 用默认的 `models/xgboost_breast_cancer.json`，后面部署时的 `OBS_KEY` 默认值就是这个，不用改。
+> 想切换线上模型：把 `ACTIVE_MODEL` 改成 `"new"` 重跑 §7 即可，服务会在下一次请求自动热切换。
 
 ### 第 3 步 · 制作镜像
 
@@ -158,6 +125,15 @@ ModelArts 在线服务用 SWR 里的这个镜像创建，要点：
 - 健康检查：HTTP `GET /health`
 - **不需要存储挂载**：模型已内置，OBS 同步走环境变量配置的 AK/SK
 - 规格从小开始（1 副本、默认调度即可）
+
+**模型在 OBS 上的地址与参数对应**（桶名以 `xgb-bc-bucket` 为例）：
+
+```text
+obs://xgb-bc-bucket/models/xgboost_breast_cancer.json
+└────OBS_BUCKET────┘└────────────OBS_KEY────────────┘
+```
+
+> 域名 `obs.cn-north-4.myhuaweicloud.com` 对应 `OBS_ENDPOINT`。部署时把 `OBS_BUCKET`、`OBS_KEY`、`OBS_ENDPOINT` 换成自己的即可。
 
 环境变量是 `app.py` 的全部开关，按需填写：
 
