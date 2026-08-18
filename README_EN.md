@@ -80,7 +80,7 @@ To see the real hot swap (OBS mode) → follow the full workflow below.
 
 ## Full Cloud Workflow (Six Novice-Friendly Steps)
 
-From training the model, to uploading it to OBS, building the image, pushing to SWR, deploying online, and finally checking the results with Python code.
+From training the model, to uploading it to OBS, building the image, pushing to SWR, deploying online, and finally checking the results in the Predict tab or with Python code.
 
 ### Step 1 · Train the Model (run on a ModelArts Notebook)
 
@@ -139,7 +139,7 @@ The ModelArts online service is created with this SWR image. Key points:
 >
 > The two layers don't conflict: **HTTP inside the container, HTTPS to the outside** — that's ModelArts' default behavior. Do not force the container protocol to HTTPS in the deployment form (gunicorn won't start TLS by itself and will fail to come up).
 
-After deployment succeeds, open the service from the service list. Three fields in the **service panel** are needed in step 6 — **get them ready here**:
+After deployment succeeds, open the service from the service list. Three fields in the **service panel** are needed in step 6 — **get them ready here** (① and ② are only needed by **Option B · notebook**; **Option A · Predict tab** authenticates inside the console and needs neither):
 
 #### ① Public Inference URL (required as `INFER_URL` in step 6)
 
@@ -200,7 +200,31 @@ Environment variables are the only switches of `app.py` — fill in as needed:
 
 After deploying, first check the service startup logs (search `xgb-obs`) for `[obs-probe] ok status=200` before moving on to verification.
 
-### Step 6 · Verify with Python (including the hot swap loop)
+### Step 6 · Verify the Results (including the hot swap loop)
+
+Two verification paths — pick either:
+
+- **Option A · ModelArts Predict tab**: pure console, zero local setup — ideal for quick acceptance
+- **Option B · Python notebook**: `verify_hotswap.ipynb` runs the health check, baseline inference, and hot swap loop in sequence — ideal for repeatable regression
+
+#### Option A · Verify via the ModelArts Predict tab (zero code)
+
+Go to ModelArts console → Online Services → open your service → **Predict** tab. The console authenticates for you — no API Key needed:
+
+1. **Health check**: set the method to `GET` and the path to `/health`, click predict. In the returned JSON, `model_source` starts with `obs://` and `model_origin` is `obs` — the model was synced from OBS
+
+![Predict tab: GET /health health check](images/inference_health_en.jpeg)
+
+2. **Baseline inference**: set the method to `POST` and the path to `/`, paste the content of `sample_request.json` as the request body (Content-Type `application/json`), click predict, and note the returned `predictresult` (identical to what the Python code returns)
+
+![Predict tab: POST / inference request config](images/inference_predict_01_en.jpeg)
+
+![Predict tab: inference response predictresult](images/inference_predict_02_en.jpeg)
+
+3. **Hot swap loop**: go back to `train_upload.ipynb` §7, set `ACTIVE_MODEL` to `"new"` and re-run it to push the new model to OBS; return to the Predict tab and repeat step 2's inference
+4. **Verdict**: a prediction difference > 1e-6 before vs. after means the hot swap succeeded (the service never restarted; reference values below)
+
+#### Option B · Verify with Python
 
 All verification lives in **`verify_hotswap.ipynb`** (open it in Jupyter, fill in the service address and credentials per §1, then run the cells in order):
 

@@ -80,7 +80,7 @@ docker rm -f xgb-0817-test
 
 ## 完整上云流程（新手向六步）
 
-从训练模型，到把模型上传 OBS、制作镜像、推 SWR、在线部署，最后用 Python 代码检查结果。
+从训练模型，到把模型上传 OBS、制作镜像、推 SWR、在线部署，最后在预测页签或用 Python 代码检查结果。
 
 ### 第 1 步 · 训练模型（在 ModelArts Notebook 上跑）
 
@@ -139,7 +139,7 @@ ModelArts 在线服务用 SWR 里的这个镜像创建，要点：
 >
 > 两层协议不冲突：**容器内 HTTP，对外 HTTPS**，是 ModelArts 默认行为，不要在部署表单里强行把容器协议改成 HTTPS（gunicorn 不会自己起 TLS，会起不来）。
 
-部署成功后回到服务列表点开服务名，**服务面板** 里有三个字段是第 6 步要用的，**先在这里准备好**：
+部署成功后回到服务列表点开服务名，**服务面板** 里有三个字段是第 6 步要用的，**先在这里准备好**（其中 ①② 仅**方式 B · notebook** 需要；**方式 A · 预测页签**在控制台内完成认证，无需另备）：
 
 #### ① 公网调用 URL（第 6 步 `INFER_URL` 必填）
 
@@ -200,7 +200,31 @@ obs://xgb-bc-bucket/models/xgboost_breast_cancer.json
 
 部署后应先检查服务启动日志（搜 `xgb-obs`）确认有 `[obs-probe] ok status=200`，再进行后续验证。
 
-### 第 6 步 · 用 Python 检查结果（含热切换闭环）
+### 第 6 步 · 检查结果（含热切换闭环）
+
+验证有两条路径，任选其一：
+
+- **方式 A · ModelArts 预测页签**：纯控制台操作，零本地环境，适合快速验收
+- **方式 B · Python notebook**：`verify_hotswap.ipynb` 依次跑完健康检查、基线推理、热切换闭环，适合反复回归
+
+#### 方式 A · 用 ModelArts 预测页签验证（零代码）
+
+进入 ModelArts 控制台 → 在线服务 → 点开你的服务 → **预测（Predict）** tab。控制台内自动完成认证，无需 API Key：
+
+1. **健康检查**：请求方式选 `GET`，路径填 `/health`，点预测。返回 JSON 中 `model_source` 以 `obs://` 开头、`model_origin` 为 `obs`，即确认模型已从 OBS 同步
+
+![预测页签：GET /health 健康检查](images/inference_health.jpeg)
+
+2. **基线推理**：请求方式选 `POST`，路径填 `/`，请求体粘贴 `sample_request.json` 的内容（Content-Type 为 `application/json`），点预测，记下返回的 `predictresult`（与 Python 代码返回完全一致）
+
+![预测页签：POST / 推理请求配置](images/inference_predict_01.jpeg)
+
+![预测页签：推理响应 predictresult](images/inference_predict_02.jpeg)
+
+3. **热切换闭环**：回 `train_upload.ipynb` §7，把 `ACTIVE_MODEL` 改成 `"new"` 重跑，将新模型推上 OBS；回到预测页签，重复第 2 步的推理
+4. **判定**：前后两次 `predictresult` 差异 > 1e-6 即热切换成功（服务全程未重启，参考值见下方判定标准）
+
+#### 方式 B · 用 Python 检查结果
 
 验证全部在 **`verify_hotswap.ipynb`** 里完成（Jupyter 打开后，按 §1 把服务地址与凭证填好，依次运行）：
 

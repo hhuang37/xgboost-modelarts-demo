@@ -31,5 +31,9 @@ _Avoid_: local mode, mount mode
 The startup connectivity check against OBS; logs `[obs-probe] ok` or `[obs-probe] FAILED`.
 _Avoid_: health check (that is `/health`), ping
 
+**Predict tab** (预测页签):
+The built-in GUI test client in a ModelArts online service's detail page; authenticates inside the console, no API Key needed. One of the two step-6 verification paths.
+_Avoid_: prediction page, test tab
+
 **Model origin** (模型来源):
 `/health` field `model_origin`: `obs` = currently serving model was synced from OBS; `baked` = from the image.
