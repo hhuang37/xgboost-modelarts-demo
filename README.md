@@ -28,8 +28,11 @@
 | `model/xgboost_breast_cancer.json` | 内置兜底模型（基线模型，100 棵树） |
 | `sample_request.json` | 30 特征标准推理请求体 |
 | `obs_tool.py` | 容器内 OBS 小工具（可选）：在容器里查 / 备份 / 替换 / 删除 OBS 对象，宿主机装好 Docker 即可用 |
-| `verify_hotswap.ipynb` | 新手向完整验证 notebook：训练两套模型 → 健康检查 → 基线推理 → 热切换闭环 |
-| `train_upload.ipynb` | 第 1/2 步用：训练两套模型并上传到 OBS（ModelArts Notebook 优先，本地 Jupyter 亦可） |
+| `verify_hotswap.ipynb` | 新手向完整验证 notebook：训练两套模型 → 健康检查 → 基线推理 → 热切换闭环 · 中文 |
+| `verify_hotswap_EN.ipynb` | `verify_hotswap.ipynb` 的英文版 |
+| `train_upload.ipynb` | 第 1/2 步用：训练两套模型并上传到 OBS（ModelArts Notebook 优先，本地 Jupyter 亦可） · 中文 |
+| `train_upload_EN.ipynb` | `train_upload.ipynb` 的英文版 |
+| `docs/adr/` | 架构决策记录（如双语文档维护约定） |
 | `model_out/` | 教程训练产物目录（自己跑第 1 步时生成，已 gitignore） |
 | `model_mount/` | 本地 `-v` 挂载验证用（自建即可：把 `model/` 里的模型复制进去，已 gitignore） |
 

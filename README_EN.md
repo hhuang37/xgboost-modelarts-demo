@@ -28,8 +28,11 @@ Core design decision: **the model is baked into the image as a fallback, while t
 | `model/xgboost_breast_cancer.json` | Baked-in fallback model (baseline model, 100 trees) |
 | `sample_request.json` | Standard 30-feature inference request body |
 | `obs_tool.py` | Optional OBS mini-tool inside the container: query / back up / replace / delete OBS objects from the container — only needs Docker on the host |
-| `verify_hotswap.ipynb` | Beginner-friendly end-to-end verification notebook: train two models → health check → baseline inference → hot swap loop |
-| `train_upload.ipynb` | Used in steps 1/2: train two models and upload them to OBS (ModelArts Notebook preferred; a local Jupyter works too) |
+| `verify_hotswap.ipynb` | Beginner-friendly end-to-end verification notebook: train two models → health check → baseline inference → hot swap loop · Chinese |
+| `verify_hotswap_EN.ipynb` | English edition of `verify_hotswap.ipynb` |
+| `train_upload.ipynb` | Used in steps 1/2: train two models and upload them to OBS (ModelArts Notebook preferred; a local Jupyter works too) · Chinese |
+| `train_upload_EN.ipynb` | English edition of `train_upload.ipynb` |
+| `docs/adr/` | Architecture decision records (e.g. the dual-language artifact convention) |
 | `model_out/` | Tutorial training output directory (generated when you run step 1 yourself; gitignored) |
 | `model_mount/` | For local `-v` mount verification (create it yourself: copy the model from `model/` into it; gitignored) |
 
@@ -84,7 +87,7 @@ From training the model, to uploading it to OBS, building the image, pushing to 
 
 ### Step 1 · Train the Model (run on a ModelArts Notebook)
 
-Open **`train_upload.ipynb`** (upload it to a ModelArts Notebook and run it; a local Jupyter works too):
+Open **`train_upload_EN.ipynb`** (upload it to a ModelArts Notebook and run it; a local Jupyter works too):
 
 1. **§1 Configuration**: fill in `OBS_BUCKET` (on a Notebook bound to an OBS agency, leave AK/SK empty)
 2. **§2–§4**: dependency installation and moxing authentication are handled automatically for the ModelArts environment
@@ -151,7 +154,7 @@ In the service panel under **Network Configuration → Public Inference URL**, l
 https://120.46.74.129/v2/infer/21548831-b574-4154-af02-54d6b6ea0a64
 ```
 
-> **Copy the complete URL**. Step 6's `verify_hotswap.ipynb` §1 needs it in `INFER_URL` (or the environment variable `MODELARTS_OBS_INFER_URL`). Do not truncate it or append a trailing slash — paste the whole thing.
+> **Copy the complete URL**. Step 6's `verify_hotswap_EN.ipynb` §1 needs it in `INFER_URL` (or the environment variable `MODELARTS_OBS_INFER_URL`). Do not truncate it or append a trailing slash — paste the whole thing.
 
 #### ② Authentication: API Key binding (required as `API_KEY` in step 6)
 
@@ -160,7 +163,7 @@ The service panel's **Authentication** field shows `API KEY Auth | 1 configured`
 1. In the **Bound API Keys** panel that pops up, click **Bind API Key**
 2. The system generates a Key (e.g. `api-1704`) and **automatically downloads a CSV** (named like `api-1704.csv`)
 3. ⚠️ **This CSV downloads only once — once you close it, the full Key is gone forever.** Save it to a safe local location immediately
-4. One column of the CSV is the API Key value — **that's where step 6's `API_KEY` / `MODELARTS_API_KEY` comes from**; `verify_hotswap.ipynb` puts it into the request header `Authorization: Bearer <API_KEY>`
+4. One column of the CSV is the API Key value — **that's where step 6's `API_KEY` / `MODELARTS_API_KEY` comes from**; `verify_hotswap_EN.ipynb` puts it into the request header `Authorization: Bearer <API_KEY>`
 
 > If the CSV is lost: go back to the binding panel, **unbind** the Key, then **Bind API Key** again to generate a new one; the system will download a fresh CSV.
 
@@ -205,7 +208,7 @@ After deploying, first check the service startup logs (search `xgb-obs`) for `[o
 Two verification paths — pick either:
 
 - **Option A · ModelArts Predict tab**: pure console, zero local setup — ideal for quick acceptance
-- **Option B · Python notebook**: `verify_hotswap.ipynb` runs the health check, baseline inference, and hot swap loop in sequence — ideal for repeatable regression
+- **Option B · Python notebook**: `verify_hotswap_EN.ipynb` runs the health check, baseline inference, and hot swap loop in sequence — ideal for repeatable regression
 
 #### Option A · Verify via the ModelArts Predict tab (zero code)
 
@@ -221,12 +224,12 @@ Go to ModelArts console → Online Services → open your service → **Predict*
 
 ![Predict tab: inference response predictresult](images/inference_predict_02_en.jpeg)
 
-3. **Hot swap loop**: go back to `train_upload.ipynb` §7, set `ACTIVE_MODEL` to `"new"` and re-run it to push the new model to OBS; return to the Predict tab and repeat step 2's inference
+3. **Hot swap loop**: go back to `train_upload_EN.ipynb` §7, set `ACTIVE_MODEL` to `"new"` and re-run it to push the new model to OBS; return to the Predict tab and repeat step 2's inference
 4. **Verdict**: a prediction difference > 1e-6 before vs. after means the hot swap succeeded (the service never restarted; reference values below)
 
 #### Option B · Verify with Python
 
-All verification lives in **`verify_hotswap.ipynb`** (open it in Jupyter, fill in the service address and credentials per §1, then run the cells in order):
+All verification lives in **`verify_hotswap_EN.ipynb`** (open it in Jupyter, fill in the service address and credentials per §1, then run the cells in order):
 
 > **Note**: both key values for §1 are in the **service panel from step 5**:
 > - `INFER_URL` ← service panel **Network Configuration → Public Inference URL** (the HTTPS one — see step 5 ①)
@@ -264,10 +267,10 @@ All verification lives in **`verify_hotswap.ipynb`** (open it in Jupyter, fill i
 
 | Verification item | Method | Result |
 |---|---|---|
-| Local · real credentials, full chain | Local docker started in OBS API mode (`docker run -e OBS_BUCKET=... -e AccessKeyID=... -e SecretAccessKey=... ...`), `verify_hotswap.ipynb` pointed at `http://127.0.0.1:18081/` | All PASS: probe 200, startup download, prediction change after model swap, `[hot-reload]` in logs, restart takes the startup-download path, OBS object restored |
+| Local · real credentials, full chain | Local docker started in OBS API mode (`docker run -e OBS_BUCKET=... -e AccessKeyID=... -e SecretAccessKey=... ...`), `verify_hotswap_EN.ipynb` pointed at `http://127.0.0.1:18081/` | All PASS: probe 200, startup download, prediction change after model swap, `[hot-reload]` in logs, restart takes the startup-download path, OBS object restored |
 | Push to SWR | `docker tag` + `docker push` (tag `obs-minimal-v5-0817`) | Push succeeded; amd64 confirmed in the console |
 | ModelArts online deployment | Unified image deployed as an online service | Service running; startup log `[obs-probe] ok`; `/health` healthy |
-| Cloud hot swap loop | `verify_hotswap.ipynb` (against the cloud service) | Without restarting the service, replacing the OBS object changes the prediction |
+| Cloud hot swap loop | `verify_hotswap_EN.ipynb` (against the cloud service) | Without restarting the service, replacing the OBS object changes the prediction |
 
 ## Troubleshooting
 
