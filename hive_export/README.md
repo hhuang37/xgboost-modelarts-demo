@@ -1,5 +1,7 @@
 # hive_export — 从华为 MRS Hive 读取训练数据
 
+[![English](https://img.shields.io/badge/README-English-blue)](README_EN.md)
+
 本目录是 xgboost demo 的**数据入口扩展**：原 demo 的 breast_cancer 数据直接来自
 `sklearn.datasets`，这里新增一条数据通路 —— 把同一张表放进华为云 MRS 的 Hive，
 再从远端 Python 读回来。两部分工作：

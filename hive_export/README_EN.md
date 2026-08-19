@@ -1,5 +1,7 @@
 # hive_export — Reading training data from Huawei MRS Hive
 
+[![简体中文](https://img.shields.io/badge/README-%E7%AE%80%E4%BD%93%E4%B8%AD%E6%96%87-blue)](README.md)
+
 This directory is a **data-source extension** for the xgboost demo: the demo
 originally loads the breast_cancer dataset straight from `sklearn.datasets`;
 here we add a second path — put the same table into Hive on Huawei Cloud MRS,
