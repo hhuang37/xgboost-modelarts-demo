@@ -5,3 +5,6 @@ obs_backup/
 model_mount/
 model_out/
 new_model_for_test.json
+.codegraph/
+AGENTS.md
+docs/agents/
