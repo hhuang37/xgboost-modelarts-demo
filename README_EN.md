@@ -1,6 +1,6 @@
 # XGBoost Breast Cancer Classification · Huawei Cloud ModelArts Online Inference + Zero-Downtime Hot Swap
 
-English | [简体中文](README.md)
+[![简体中文](https://img.shields.io/badge/README-%E7%AE%80%E4%BD%93%E4%B8%AD%E6%96%87-blue)](README.md)
 
 An XGBoost binary classifier for breast cancer, packaged as a **single Docker image** and deployed to a Huawei Cloud ModelArts online inference service. The flagship capability is the **zero-downtime hot swap**: upload a new model to OBS and the next inference request is served by it — no service restart, no container rebuild.
 

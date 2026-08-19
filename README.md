@@ -1,6 +1,6 @@
 # XGBoost 乳腺癌分类 · 华为云 ModelArts 在线推理 + 零停机热切换
 
-[English](README_EN.md) | 简体中文
+[![English](https://img.shields.io/badge/README-English-blue)](README_EN.md)
 
 基于 XGBoost 的乳腺癌（breast cancer）二分类模型，打包成**单一 Docker 镜像**部署到华为云 ModelArts 在线推理服务。核心演示能力是**零停机热切换**：把新模型传到 OBS，服务不用重启，下一次推理请求自动用新模型。
 
