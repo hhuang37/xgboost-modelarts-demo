@@ -5,7 +5,7 @@
 This directory is a **data-source extension** for the xgboost demo: the demo
 originally loads the breast_cancer dataset straight from `sklearn.datasets`;
 here we add a second path — put the same table into Hive on Huawei Cloud MRS,
-then read it back from remote Python. Two pieces of work:
+then read it back from remote Python. Three parts:
 
 ## A. Prepare the Hive table (one-time)
 
@@ -40,13 +40,35 @@ must allow `21066` (HiveServer2) and `21732` (KDC, TCP+UDP). Open
 to root / passwordless-sudo / no-root environments, and cell 5 prompts for the
 MRS business-user password.
 
+> ⚠️ Seeing `sasl_decode ... Unable to find a callback: 32775` when querying a
+> large result set? That is the libsasl2 large-frame decode bug — fixes in
+> `MRS_RUN.md` §5 (small-batch fetch / downgrade to 2.1.27).
+
 The single source of truth for cluster facts (IPs/SPN/ports) and the
 troubleshooting quick reference: `MRS_RUN.md` §0 and §5 (Chinese); the notebook
 also carries a condensed troubleshooting table (§8).
 
+## C. Train straight from Hive (the train_upload_hive series)
+
+The Hive edition of `train_upload.ipynb`: the dataset no longer comes from
+`sklearn.datasets` but from the `breast_cancer` table built in section A
+(Hive's `mean_radius` columns are restored to sklearn's `mean radius` so
+feature names stay consistent with `sample_request.json` / `app.py`);
+everything else (OLD/NEW model training, OBS upload, hot-swap verification)
+is unchanged.
+
+| File | Purpose | Status |
+|---|---|---|
+| `train_upload_hive.ipynb` (Chinese original) / `train_upload_hive_EN.ipynb` | Full edition: the 6 connection cells from section B + fetch/validation/training/upload, step-by-step troubleshootable | ✅ verified 2026-08-20 |
+| `train_upload_hive_simple.ipynb` / `train_upload_hive_simple_EN.ipynb` + `train_upload_hive_lib.py` (Chinese log messages) / `train_upload_hive_lib_EN.py` (English log messages, used by the EN notebook) | Slim edition: connection/fetch/dependency install (with heartbeat) moved into the lib; the notebook keeps only config and the training flow; upload the lib next to the notebook — the two libs share identical logic, only the log language differs | ⏳ not yet verified |
+
+Choosing: full edition for troubleshooting or to see every step; slim edition
+for daily use. Both share the same connection recipe (ADR-0002).
+
 ## Relation to the xgboost demo
 
-An independent, optional feature: it does not affect the original training
-(`train_upload.ipynb`) or deployment verification (`verify_hotswap.ipynb`)
-flows. To feed training from Hive, grab a DataFrame via the notebook's §8
-`run_query()` and hand it to the existing training code.
+The original training (`train_upload.ipynb`) and deployment verification
+(`verify_hotswap.ipynb`) are unaffected; the Hive edition in section C is a
+drop-in alternative training entry — it produces the same model file and
+uploads to the same OBS path as the original, so the downstream hot-swap
+verification flow stays as is.

@@ -99,6 +99,7 @@ python3 test_hive_conn_mrs.py --query "SELECT * FROM breast_cancer LIMIT 5"
 | pip 装 `kerberos` 失败 `gcc not found` | `yum install -y gcc krb5-devel`（见第 2 节） |
 | pip 装 `sasl` 失败 `cannot execute cc1plus` | 缺 g++：`yum install -y gcc-c++ cyrus-sasl-devel` |
 | `AttributeError: 'sasl.saslwrapper.Client' object has no attribute 'available_mechs'`（ModelArts 无 root 路径） | 误把 pure-sasl 的 `available_mechs()` 用在 cyrus 的 `sasl` 包上（后者无列举机制 API）→ 改功能探测：`Client().setAttr(...)`+`init()`+`start("GSSAPI")`，只有报 `No worthy mechs` 才是缺插件（conda-forge 的 `cyrus-sasl` 自带 `lib/sasl2/libgssapiv2.so`） |
+| `TTransportException: sasl_decode ... Unable to find a callback: 32775`（连接/execute 正常，`fetchall` 大结果集时炸；小查询如 `LIMIT 5` 正常） | libsasl2 **2.1.28 已知回归**：auth-conf 大帧解密失败。对策任选：① 小块取 —— `cur.arraysize = 5` 再 `fetchall`（train_upload_hive 系列 notebook 已内置）；② 降级 `conda install -c conda-forge libsasl2=2.1.27` 后重启内核（ModelArts 实测 2026-08-20） |
 | beeline 报 `SPARK_JAVA_HOME is not set` | 先 `source /opt/hadoopclient/bigdata_env` |
 
 ## 6. 交叉验证（可选）
