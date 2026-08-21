@@ -51,7 +51,7 @@ OBS、热切换验证）不变。
 | 文件 | 作用 | 状态 |
 |---|---|---|
 | `train_upload_hive.ipynb`（英文版 `_EN.ipynb`） | 完整版：B 节连接 6 格 + 取数/校验/训练/上传，逐步可排障 | ✅ 2026-08-20 实测通过 |
-| `train_upload_hive_simple.ipynb`（英文版 `_EN.ipynb`）+ `train_upload_hive_lib.py`（中文日志）/ `train_upload_hive_lib_EN.py`（英文日志，配 EN 简版） | 简版：连接/取数/依赖安装（带心跳）收进 lib，notebook 只留配置与训练流程；lib 与 notebook 同目录上传，两份 lib 逻辑相同仅日志语言不同 | ⏳ 待实测 |
+| `train_upload_hive_simple.ipynb`（英文版 `_EN.ipynb`）+ `train_upload_hive_lib.py`（中文日志）/ `train_upload_hive_lib_EN.py`（英文日志，配 EN 简版） | 简版：连接/取数/依赖安装（带心跳）收进 lib，notebook 只留配置与训练流程；lib 与 notebook 同目录上传，两份 lib 逻辑相同仅日志语言不同 | ✅ 2026-08-20 实测通过 |
 
 选型：要排障或想看清每一步 → 完整版；日常使用 → 简版。两者共用同一连接配方（ADR-0002）。
 

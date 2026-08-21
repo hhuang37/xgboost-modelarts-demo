@@ -60,7 +60,7 @@ is unchanged.
 | File | Purpose | Status |
 |---|---|---|
 | `train_upload_hive.ipynb` (Chinese original) / `train_upload_hive_EN.ipynb` | Full edition: the 6 connection cells from section B + fetch/validation/training/upload, step-by-step troubleshootable | ✅ verified 2026-08-20 |
-| `train_upload_hive_simple.ipynb` / `train_upload_hive_simple_EN.ipynb` + `train_upload_hive_lib.py` (Chinese log messages) / `train_upload_hive_lib_EN.py` (English log messages, used by the EN notebook) | Slim edition: connection/fetch/dependency install (with heartbeat) moved into the lib; the notebook keeps only config and the training flow; upload the lib next to the notebook — the two libs share identical logic, only the log language differs | ⏳ not yet verified |
+| `train_upload_hive_simple.ipynb` / `train_upload_hive_simple_EN.ipynb` + `train_upload_hive_lib.py` (Chinese log messages) / `train_upload_hive_lib_EN.py` (English log messages, used by the EN notebook) | Slim edition: connection/fetch/dependency install (with heartbeat) moved into the lib; the notebook keeps only config and the training flow; upload the lib next to the notebook — the two libs share identical logic, only the log language differs | ✅ verified 2026-08-20 |
 
 Choosing: full edition for troubleshooting or to see every step; slim edition
 for daily use. Both share the same connection recipe (ADR-0002).
